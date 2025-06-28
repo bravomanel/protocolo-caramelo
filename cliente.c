@@ -1,175 +1,237 @@
-// No codeblocks inclua no menu em: Project -> Build Options... -> Linker settings -> Other link options -l wsock32
-//#define WIN // Se n�o for no windows comente essa linha e compile no terminal: gcc -o tc tc.c
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
+// No Code::Blocks, inclua a biblioteca pthread para threads:
+// Project -> Build Options... -> Linker settings -> Other link options: -lwsock32 -lpthread
+// Se não usar threads, apenas -lwsock32 é necessário por enquanto.
+
+// #define WIN // Descomente para compilar no Windows
 #ifdef WIN
 #include <winsock2.h>
+#include <windows.h> // Necessário para threads no Windows
+#include <process.h> // Para _beginthreadex
 #else
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <unistd.h>
+#include <pthread.h> // Biblioteca de threads para Linux/macOS
 #endif
 
-#define TAM_MENSAGEM 255     /* mensagem de maior tamanho */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
+#define TAM_MENSAGEM 256
 #define PORTA_SERVIDOR_TCP 9999
-
+#define DEFAULT_P2P_PORT 5000
 #define MAXPENDING 5
 
-int criar_socket(int porta)
+// Variáveis globais para serem acessíveis pelas threads
+int sock_servidor;
+char meu_nome[50];
+int minha_porta_p2p;
+
+/*
+    Aqui vamos colocar as funções que tratam as ações do menu.
+    Elas serão chamadas pelo loop no main.
+*/
+
+void tratar_envio_direto()
 {
-    int sock;
-    struct sockaddr_in endereco; /* Endere�o Local */
+    char nome_destino[50];
+    char mensagem[TAM_MENSAGEM];
+    char buffer_final[TAM_MENSAGEM];
 
-    /* Cria��o do socket datagrama/UDP para recep��o e envio de pacotes */
-    if ((sock = socket(PF_INET, SOCK_STREAM, 0)) < 0)
-    {
-        printf("\nErro na cria��o do socket!\n");fflush(stdout);
-        return(-1);
-    }
+    printf("\nDigite o nome do destinatário: ");
+    scanf("%s", nome_destino);
+    printf("Digite a sua mensagem: ");
+    // Limpa o buffer de entrada antes de ler a mensagem completa
+    while (getchar() != '\n')
+        ;
+    fgets(mensagem, TAM_MENSAGEM, stdin);
+    // Remove o \n que o fgets adiciona
+    mensagem[strcspn(mensagem, "\n")] = 0;
 
-    if (porta > 0)
-    {
-        /* Constru��o da estrutura de endere�o local */
-        memset(&endereco, 0, sizeof(endereco));       /* Zerar a estrutura */
-        endereco.sin_family      = AF_INET;           /* Fam�lia de endere�amento da Internet */
-        endereco.sin_addr.s_addr = htonl(INADDR_ANY); /* Qualquer interface de entrada */
-        endereco.sin_port        = htons(porta);      /* Porta local */
+    printf("\n[DEBUG] Preparando para enviar '%s' para '%s'\n", mensagem, nome_destino);
 
-        /* Instanciar o endereco local */
-        if (bind(sock, (struct sockaddr *) &endereco, sizeof(endereco)) < 0)
-        {
-           printf("\nErro no bind()!\n");fflush(stdout);
-           return(-1);
-        }
-
-        /* Indica que o socket escutara as conex�es */
-        if (listen(sock, MAXPENDING) < 0)
-        {
-           printf("\nErro no listen()!\n");fflush(stdout);
-           return(-1);
-        }
-
-    }
-
-    return(sock);
+    // TODO:
+    // 1. Procurar na sua lista local de usuários o IP e a Porta do 'nome_destino'.
+    // 2. Criar um NOVO socket temporário.
+    // 3. Conectar nesse socket com o IP/Porta do destinatário.
+    // 4. Montar a mensagem no formato do protocolo: <TAMANHO>M<SEU_NOME>|<MENSAGEM>|
+    //    Exemplo: sprintf(buffer_final, "%03dM%s|%s|", (int)strlen(payload), meu_nome, mensagem);
+    // 5. Enviar a mensagem com send().
+    // 6. Fechar o socket temporário com close().
 }
 
-int conectar_com_servidor(int sock,char *IP,int porta)
+void tratar_envio_broadcast()
 {
-    struct sockaddr_in endereco; /* Endere�o Local */
+    char mensagem[TAM_MENSAGEM];
 
-    /* Constru��o da estrutura de endere�o do servidor */
-    memset(&endereco, 0, sizeof(endereco));   /* Zerar a estrutura */
-    endereco.sin_family      = AF_INET;       /* Fam�lia de endere�amento da Internet */
-    endereco.sin_addr.s_addr = inet_addr(IP); /* Endere�o IP do Servidor */
-    endereco.sin_port        = htons(porta);  /* Porta do Servidor */
+    printf("\nDigite a sua mensagem para todos: ");
+    while (getchar() != '\n')
+        ;
+    fgets(mensagem, TAM_MENSAGEM, stdin);
+    mensagem[strcspn(mensagem, "\n")] = 0;
 
-    /* Estabelecimento da conex�o com o servidor de echo */
-    if (connect(sock, (struct sockaddr *) &endereco, sizeof(endereco)) < 0)
-    {
-        printf("\nErro no connect()!\n");fflush(stdout);
-        return(-1);
-    }
-    return(0);
+    printf("\n[DEBUG] Preparando para enviar '%s' para TODOS\n", mensagem);
+
+    // TODO:
+    // 1. Para cada usuário na sua lista local (exceto você mesmo):
+    //    a. Fazer exatamente o mesmo processo da função tratar_envio_direto().
+    //    b. Ou seja, um loop que cria socket, conecta, envia e fecha para cada usuário.
 }
 
-int enviar_mensagem(char *mensagem,int sock)
+void tratar_desconexao()
 {
-    /* Envia o conte�do da mensagem para o cliente */
-    if (send(sock, mensagem, strlen(mensagem), 0) != strlen(mensagem))
-    {
-        printf("\nErro no envio da mensagem\n");fflush(stdout);
-        return(-1);
-    }
+    char buffer_final[TAM_MENSAGEM];
+    printf("\nDesconectando do servidor...\n");
 
-    printf("\nTCP Cliente: Enviei (%s)\n",mensagem);fflush(stdout);
+    // TODO:
+    // 1. Montar a mensagem de desconexão: <TAMANHO>D<SEU_NOME>|
+    //    Exemplo: sprintf(buffer_final, "%03dD%s|", (int)strlen(meu_nome)+1, meu_nome);
+    // 2. Enviar a mensagem para o SERVIDOR usando o 'sock_servidor'.
+    // 3. Fechar a conexão principal: close(sock_servidor).
 
-    return(0);
+    // Por enquanto, apenas fechamos
+    close(sock_servidor);
 }
 
-int receber_mensagem(char *mensagem,int sock)
+void exibir_menu()
 {
-    /* Limpar o buffer da mensagem */
-    memset((void *) mensagem,(int) NULL,TAM_MENSAGEM);
-
-    /* Espera pela recep��o de alguma mensagem do cliente conectado*/
-    if (recv(sock, mensagem, TAM_MENSAGEM, 0) < 0)
-    {
-        printf("\nErro na recep��o da mensagem\n");fflush(stdout);
-        return(-1);
-    }
-
-    printf("\nTCP Cliente: Recebi (%s)\n",mensagem);fflush(stdout);
-
-    return(0);
+    // system("clear"); // ou "cls" no Windows
+    printf("\n--- CHAT CARAMELO ---\n");
+    printf("Logado como: %s\n", meu_nome);
+    printf("---------------------\n");
+    printf("1 - Enviar mensagem direta (DM)\n");
+    printf("2 - Enviar mensagem para todos (Broadcast)\n");
+    printf("3 - Listar usuários online\n");
+    printf("4 - Sair\n");
+    printf("Escolha uma opção: ");
 }
 
-void exibir_menu() {
-    printf("CARAMELO MENSAGENS");
-    printf("1 - Enviar mensagem para um usuário");
-    printf("2 - Enviar mensagem para todos os usuários");
-    printf("3 - Se desconectar");
-    scanf(char)
+// AINDA NÃO IMPLEMENTADO - AQUI FICARÁ A LÓGICA DE RECEBIMENTO P2P
+void *thread_recebimento(void *arg)
+{
+    printf("[THREAD] Thread de recebimento iniciada. Ouvindo na porta %d\n", minha_porta_p2p);
+
+    // TODO:
+    // 1. Criar um socket de servidor (igual ao do programa servidor) para ouvir na 'minha_porta_p2p'.
+    // 2. Entrar em um loop infinito:
+    //    a. Chamar accept() para esperar uma conexão de outro cliente.
+    //    b. Quando receber uma conexão, chamar recv() para ler a mensagem.
+    //    c. Processar a mensagem (se for 'M' ou 'B', exibir na tela).
+    //    d. Fechar o socket da conexão do cliente com close().
+    //    e. Voltar para o accept().
+
+    return NULL;
 }
 
 int main(int argc, char *argv[])
 {
-    int  sock;                   /* Socket */
-    int  resultado;              /* Resultado das fun��es */
-    char mensagem[TAM_MENSAGEM]; /* Buffer para a recep��o da string de echo */
-    char IP[TAM_MENSAGEM];       /* Endere�o IP do servidor */
 #ifdef WIN
-    WORD wPackedValues;
-    WSADATA  SocketInfo;
-    int      nLastError,
-	         nVersionMinor = 1,
-	         nVersionMajor = 1;
-    wPackedValues = (WORD)(((WORD)nVersionMinor)<< 8)|(WORD)nVersionMajor;
-    nLastError = WSAStartup(wPackedValues, &SocketInfo);
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+    {
+        printf("Erro ao iniciar o Winsock.\n");
+        return 1;
+    }
 #endif
 
-    if (argc != 3)    /* Testa se o n�mero de par�metros est� correto */
-    {
-        printf("Uso: %s <IP Servidor> <Palavra de Echo>\n", argv[0]);
-        return(1);
-    }
-    memset((void *) IP      ,(int) NULL,TAM_MENSAGEM);
-    strcpy(IP      ,argv[1]); /* IP Servidor */
-    memset((void *) mensagem,(int) NULL,TAM_MENSAGEM);
-    strcpy(mensagem,argv[2]);
+    char *ip_servidor;
+    char meu_nome[50];
+    int minha_porta_p2p;
 
-    sock = criar_socket(0);
-    if (sock < 0)
-    {
-        printf("\nErro na cria��o do socket!\n");
-        return(1);
+    if (argc == 3)
+    { // Usuário usa a porta padrao
+        ip_servidor = argv[1];
+        strcpy(meu_nome, argv[2]);
+        minha_porta_p2p = DEFAULT_P2P_PORT;
+        printf("Porta P2P não especificada, usando padrão: %d\n", minha_porta_p2p);
     }
-
-    resultado = conectar_com_servidor(sock,IP,PORTA_SERVIDOR_TCP);
-    if (resultado < 0)
-    {
-        printf("\nErro na conex�o com o servidor\n");
-        return(1);
+    else if (argc == 4)
+    { // Usuário especificou a porta
+        ip_servidor = argv[1];
+        strcpy(meu_nome, argv[2]);
+        minha_porta_p2p = atoi(argv[3]);
+        printf("Usando porta P2P especificada: %d\n", minha_porta_p2p);
     }
-
-    resultado = enviar_mensagem(mensagem,sock);
-    if (resultado < 0)
-    {
-        printf("\nErro no envio da mensagem\n");
-        return(1);
+    else
+    { // Número incorreto de argumentos
+        printf("Uso: %s <IP Servidor> <Seu Nome> [Porta P2P Opcional]\n", argv[0]);
+        return 1;
     }
 
-    /* Recebendo como resposta a mesma string vinda do servidor */
-    resultado = receber_mensagem(mensagem,sock);
-    if (resultado < 0)
+    if ((sock_servidor = socket(PF_INET, SOCK_STREAM, 0)) < 0)
     {
-        printf("\nErro no recebimento da mensagem\n");
-        return(1);
+        printf("Erro no socket()\n");
+        return 1;
     }
 
-    close(sock);
+    struct sockaddr_in endereco_servidor;
+    memset(&endereco_servidor, 0, sizeof(endereco_servidor));
+    endereco_servidor.sin_family = AF_INET;
+    endereco_servidor.sin_addr.s_addr = inet_addr(ip_servidor);
+    endereco_servidor.sin_port = htons(PORTA_SERVIDOR_TCP);
 
-    return(0);
+    if (connect(sock_servidor, (struct sockaddr *)&endereco_servidor, sizeof(endereco_servidor)) < 0)
+    {
+        printf("Erro no connect() ao servidor principal\n");
+        return 1;
+    }
+
+    printf("Conectado ao servidor! Registrando...\n");
+
+    // TODO:
+    // 2. Enviar mensagem de REGISTRO ('R') para o servidor
+    // char msg_registro[TAM_MENSAGEM];
+    // sprintf(msg_registro, "%03dR%s|%d|%s|", ...); // Montar a msg 'R'
+    // send(sock_servidor, msg_registro, strlen(msg_registro), 0);
+
+    // TODO:
+    // 3. Receber a lista inicial de usuários ('L') do servidor
+    // recv(sock_servidor, buffer_lista, TAM_MENSAGEM, 0);
+    // processar_lista(buffer_lista);
+
+    // TODO: (Passo futuro)
+    // 4. Criar a thread para recebimento de mensagens P2P
+    // pthread_t receiver_thread_id;
+    // pthread_create(&receiver_thread_id, NULL, thread_recebimento, NULL);
+
+    // 5. Loop do menu principal
+    int escolha = 0;
+    while (escolha != 4)
+    {
+        exibir_menu();
+        scanf("%d", &escolha);
+
+        switch (escolha)
+        {
+        case 1:
+            tratar_envio_direto();
+            break;
+        case 2:
+            tratar_envio_broadcast();
+            break;
+        case 3:
+            printf("\n--- USUARIOS ONLINE ---\n");
+            // TODO: Imprimir a lista de usuários que você tem armazenada localmente.
+            printf("Funcionalidade ainda não implementada.\n");
+            printf("-----------------------\n");
+            break;
+        case 4:
+            tratar_desconexao();
+            printf("Até mais!\n");
+            break;
+        default:
+            printf("\nOpção inválida! Tente novamente.\n");
+            // Limpa o buffer de entrada para evitar loops infinitos se o usuário digitar uma letra
+            while (getchar() != '\n')
+                ;
+            break;
+        }
+    }
+
+#ifdef WIN
+    WSACleanup();
+#endif
+
+    return 0;
 }

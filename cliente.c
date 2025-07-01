@@ -37,7 +37,7 @@ int minha_porta_p2p;
 int cliente_rodando = 1; // Flag para controlar a execução das threads
 
 Usuario *lista_usuarios = NULL; // Ponteiro para a lista local de usuários
-pthread_mutex_t mutex_lista = PTHREAD_MUTEX_INITIALIZER; // Mutex para proteger a lista
+pthread_mutex_t mutex_lista = PTHREAD_MUTEX_INITIALIZER; // Mutex para proteger a lista 
 
 // --- FUNÇÕES DE GERENCIAMENTO DA LISTA LOCAL ---
 
@@ -71,15 +71,17 @@ void processar_e_atualizar_lista(char *lista_str) {
     // Formato esperado: LNome1:IP1:Porta1|Nome2:IP2:Porta2|...
     destruir_lista_local(); // Limpa a lista antiga antes de popular com a nova
 
-    char *payload = lista_str + 1; // Pula o caractere 'L'
+    char *payload = strdup(lista_str) + 1; // Pula o caractere 'L'
     char *token_usuario = strtok(payload, "|");
+    int tam_str;
 
     while (token_usuario != NULL) {
+        tam_str = strlen(token_usuario) + 2;
         Usuario *novo = (Usuario*)malloc(sizeof(Usuario));
         if (novo) {
             char *nome = strtok(token_usuario, ":");
             char *ip = strtok(NULL, ":");
-            char *porta_str = strtok(NULL, ":");
+            char *porta_str = strtok(NULL, ":|");
 
             if (nome && ip && porta_str) {
                 strcpy(novo->nome, nome);
@@ -96,7 +98,12 @@ void processar_e_atualizar_lista(char *lista_str) {
                 free(novo);
             }
         }
+        
         token_usuario = strtok(NULL, "|");
+        
+        if(tam_str < strlen(lista_str)){
+          token_usuario = lista_str + tam_str;
+        }
     }
     printf("\n[INFO] Lista de usuários atualizada.\n");
 }
@@ -283,6 +290,33 @@ void *thread_recebimento(void *arg) {
     return NULL;
 }
 
+// --- THREAD DE RECEBIMENTO SERVER ---
+void *thread_servidor(void *arg) {
+    char buffer[TAM_MENSAGEM];
+    
+    while (cliente_rodando) {
+        memset(buffer, 0, TAM_MENSAGEM);
+        int bytes_recebidos = recv(sock_servidor, buffer, TAM_MENSAGEM, 0);
+
+        if (bytes_recebidos <= 0) {
+            if (cliente_rodando) {
+                printf("\n[ERRO] Conexão com o servidor perdida.\n");
+                cliente_rodando = 0;  // Encerra o cliente
+            }
+            break;
+        }
+
+        // Processa a mensagem recebida do servidor
+        if (buffer[0] == 'L') {  // Se for uma lista de usuários
+            processar_e_atualizar_lista(buffer);
+        }
+    }
+    
+    printf("[INFO] Thread do servidor encerrada.\n");
+    return NULL;
+}
+
+
 // --- FUNÇÃO MAIN ---
 int main(int argc, char *argv[]) {
     #ifdef WIN
@@ -327,54 +361,59 @@ int main(int argc, char *argv[]) {
     send(sock_servidor, msg_registro, strlen(msg_registro), 0);
 
     // 2. Receber a lista inicial de usuários ('L') do servidor (ou uma confirmação 'A')
-    // Nota: Seu servidor atual não envia a lista no registro, ele só processa.
-    // Esta parte precisaria de um ajuste no servidor para ser funcional.
-    // Por enquanto, vamos assumir que recebemos e processamos a lista.
     char buffer_resposta[TAM_MENSAGEM];
     memset(buffer_resposta, 0, TAM_MENSAGEM);
-    // recv(sock_servidor, buffer_resposta, TAM_MENSAGEM, 0); // Descomente se o servidor enviar a lista
-    // if(buffer_resposta[0] == 'L') {
-    //    processar_e_atualizar_lista(buffer_resposta);
-    // }
-    
-    // 3. Criar a thread para recebimento de mensagens P2P
-    pthread_t receiver_thread_id;
-    if (pthread_create(&receiver_thread_id, NULL, thread_recebimento, NULL) != 0) {
-        printf("[ERRO FATAL] Falha ao criar a thread de recebimento.\n");
-        return 1;
+     
+    recv(sock_servidor, buffer_resposta, TAM_MENSAGEM, 0); // Descomente se o servidor enviar a lista
+     
+    if(buffer_resposta[0] == 'L') {
+        processar_e_atualizar_lista(buffer_resposta);
     }
     
-    // 4. Loop do menu principal
+    // 3. Criar a thread para recebimento P2P
+    pthread_t receiver_thread_id;
+    if (pthread_create(&receiver_thread_id, NULL, thread_recebimento, NULL) != 0) {
+        printf("[ERRO] Falha ao criar a thread de recebimento P2P.\n");
+        return 1;
+    }
+
+    // 4. Criar a thread para receber mensagens do servidor
+    pthread_t server_thread_id;
+    if (pthread_create(&server_thread_id, NULL, thread_servidor, NULL) != 0) {
+        printf("[ERRO] Falha ao criar a thread do servidor.\n");
+        cliente_rodando = 0;
+        return 1;
+    }
+
+    // 5. Loop do menu principal
     int escolha = 0;
     while (cliente_rodando && escolha != 4) {
         exibir_menu();
-        if (scanf("%d", &escolha) != 1) { // Proteção contra input não numérico
-            escolha = 0; // Reseta a escolha
-            while(getchar() != '\n'); // Limpa o buffer de entrada
+        if (scanf("%d", &escolha) != 1) {
+            while(getchar() != '\n');  // Limpa buffer se não for número
+            continue;
         }
 
         switch (escolha) {
             case 1: tratar_envio_direto(); break;
             case 2: tratar_envio_broadcast(); break;
-            case 3: 
+            case 3:  // Agora apenas imprime a lista já atualizada
                 printf("\n--- USUARIOS ONLINE ---\n");
                 imprimir_lista_local();
                 printf("-----------------------\n");
                 break;
             case 4: tratar_desconexao(); break;
-            default:
-                printf("\nOpção inválida! Tente novamente.\n");
-                break;
+            default: printf("\nOpção inválida!\n"); break;
         }
     }
 
-    // Espera a thread de recebimento terminar
+    // 6. Esperar as threads terminarem
     pthread_join(receiver_thread_id, NULL);
+    pthread_join(server_thread_id, NULL);
+    
     printf("Programa encerrado.\n");
-
     #ifdef WIN
         WSACleanup();
     #endif
-
     return 0;
 }

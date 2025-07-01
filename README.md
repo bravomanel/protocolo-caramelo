@@ -49,46 +49,47 @@ Aqui está a lista de tarefas pra gente ir marcando o que já foi feito.
 
 Servidor (servidor.c)
 
-[ ] 1. Estrutura Básica:
-   [ ] Criar o socket, fazer o bind com a porta e botar pra escutar (listen).
-   [ ] Deixar ele rodando em um loop infinito esperando gente conectar (accept).
+[X] 1. Estrutura Básica:
+   [X] Criar o socket, fazer o bind com a porta e botar pra escutar (listen).
+   [X] Deixar ele rodando em um loop infinito esperando gente conectar (accept).
 
-[ ] 2. Gerenciamento de Usuários:
-   [ ] Criar uma struct pra guardar os dados do usuário (nome, ip, porta, socket).
-   [ ] Ter uma lista/array global pra guardar todo mundo que tá online.
+[X] 2. Gerenciamento de Usuários:
+   [X] Criar uma struct pra guardar os dados do usuário (nome, ip, porta, socket).
+   [X] Ter uma lista/array global pra guardar todo mundo que tá online.
 
-[ ] 3. Lidar com Múltiplos Clientes (Threads!):
-   [ ] A cada accept(), criar uma nova thread pra cuidar daquele cliente.
-   [ ] A thread principal fica livre, só pra aceitar novas conexões.
+[X] 3. Lidar com Múltiplos Clientes (Threads!):
+   [X] A cada accept(), criar uma nova thread pra cuidar daquele cliente.
+   [X] A thread principal fica livre, só pra aceitar novas conexões.
 
-[ ] 4. Sincronização (Mutex!):
-   [ ] Proteger a lista de usuários com pthread_mutex pra não dar problema quando vários clientes conectarem/desconectarem ao mesmo tempo.
+[X] 4. Sincronização (Mutex!):
+   [X] Proteger a lista de usuários com pthread_mutex pra não dar problema quando vários clientes conectarem/desconectarem ao mesmo tempo.
 
-[ ] 5. Lógica do Protocolo:
-   [ ] Receber mensagem de Registro ('R') e adicionar o novo usuário na lista.
-   [ ] Receber mensagem de Desconexão ('D') e tirar o usuário da lista.
-   [ ] Enviar a Lista de Usuários ('L') pra quem acabou de entrar.
-   [ ] Quando alguém entra ou sai, mandar a lista atualizada pra todo mundo automaticamente.
+[X] 5. Lógica do Protocolo:
+   [X] Receber mensagem de Registro ('R') e adicionar o novo usuário na lista.
+   [X] Receber mensagem de Desconexão ('D') e tirar o usuário da lista.
+   [X] Enviar a Lista de Usuários ('L') pra quem acabou de entrar.
+   [X] Quando alguém entra ou sai, mandar a lista atualizada pra todo mundo automaticamente.
 
 Cliente (cliente.c)
 
-[ ] 1. Estrutura Básica:
-   [ ] Conectar no servidor.
-   [ ] Perguntar o nome do usuário e a porta P2P que ele vai usar.
-   [ ] Enviar a mensagem de registro ('R') para o servidor.
+[X] 1. Estrutura Básica:
+   [X] Conectar no servidor.
+   [X] Perguntar o nome do usuário e a porta P2P que ele vai usar.
+   [X] Enviar a mensagem de registro ('R') para o servidor.
 
-[ ] 2. UI sem travar (Threads):
-   [ ] Thread Principal (Input): Fica lendo o que o usuário digita (/msg, /broadcast, /quit).
-   [ ] Thread Secundária (Recebimento): Fica só ouvindo na porta P2P do cliente, esperando mensagens de outros usuários.
+[X] 2. UI sem travar (Threads):
+   [X] Thread Principal (Input): Fica lendo o que o usuário digita (/msg, /broadcast, /quit).
+   [X] Thread Secundária (Recebimento): Fica só ouvindo na porta P2P do cliente, esperando mensagens de outros usuários.
+   [X] Thread Terciária (servidor): Fica ouvindo o broadcast da lista de usuários que o servidor envia.
 
-[ ] 3. Lógica de Envio (na Thread Principal):
-   [ ] Enviar Mensagem Direta ('M'): Olhar na lista local o IP/Porta do destino, conectar direto nele, mandar a mensagem e fechar a conexão.
-   [ ] Enviar Broadcast ('B'): Fazer um loop na lista de usuários e mandar a mensagem pra cada um.
-   [ ] Enviar Desconexão ('D'): Avisar o servidor que tá saindo e fechar o programa.
+[X] 3. Lógica de Envio (na Thread Principal):
+   [X] Enviar Mensagem Direta ('M'): Olhar na lista local o IP/Porta do destino, conectar direto nele, mandar a mensagem e fechar a conexão.
+   [X] Enviar Broadcast ('B'): Fazer um loop na lista de usuários e mandar a mensagem pra cada um.
+   [X] Enviar Desconexão ('D'): Avisar o servidor que tá saindo e fechar o programa.
 
-[ ] 4. Lógica de Recebimento (na Thread Secundária):
-   [ ] Receber Lista ('L') do servidor e guardar/atualizar a lista local de quem tá online.
-   [ ] Receber Mensagem Direta/Broadcast ('M'/'B') de outros clientes e mostrar na tela.
+[X] 4. Lógica de Recebimento (na Thread Secundária e Terciária):
+   [X] Receber Lista ('L') do servidor e guardar/atualizar a lista local de quem tá online. (Thread Terciária)
+   [X] Receber Mensagem Direta/Broadcast ('M'/'B') de outros clientes e mostrar na tela.
 
 [ ] 5. Aguardar para mostrar mensagem caso o usuário esteja digitando:
    [ ] Se o usuário estiver digitando, não mostrar a mensagem recebida até que ele termine de digitar ou envie a mensagem.

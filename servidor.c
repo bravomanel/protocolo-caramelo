@@ -80,7 +80,7 @@ void remover_usuario(int socket_fd) {
 }
 
 void broadcast_lista_usuarios() {
-    char buffer_lista[TAM_MENSAGEM * 5]; // Buffer grande para a lista
+    char buffer_lista[TAM_MENSAGEM * 10]; // Buffer grande para a lista
     char buffer_usuario[100];
 
     pthread_mutex_lock(&mutex_lista);

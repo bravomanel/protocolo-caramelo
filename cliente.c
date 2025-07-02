@@ -1,25 +1,29 @@
 // Para compilar com GCC:
-// Linux/macOS: gcc cliente_final_v5.c -o cliente -lpthread
-// Windows:     gcc cliente_final_v5.c -o cliente.exe -lwsock32 -lpthread
+// Linux/macOS: gcc cliente_final_v6.c -o cliente -lpthread
+// Windows:     gcc cliente_final_v6.c -o cliente.exe -lwsock32 -lpthread
 
-// #define WIN // Descomente esta linha para compilar no Windows
-#ifdef WIN
+// Headers padrão que são seguros em qualquer sistema
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h> // Incluído aqui para garantir que os tipos de thread sejam sempre conhecidos
+
+// Headers e definições específicas do sistema operacional
+#ifdef _WIN32 // _WIN32 é pré-definido por compiladores Windows (MinGW)
     #include <winsock2.h>
     #include <windows.h>
     #include <process.h>
-    #include <conio.h> // Para _kbhit() e _getch()
+    #include <conio.h>
+    #define close_socket(s) closesocket(s)
 #else
     #include <sys/socket.h>
     #include <arpa/inet.h>
     #include <unistd.h>
-    #include <pthread.h>
-    #include <sys/select.h> // Para select()
-    #include <termios.h>   // Para manipulação do terminal
+    #include <sys/select.h>
+    #include <termios.h>
+    #define close_socket(s) close(s)
 #endif
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 // --- Definições do Protocolo e Constantes ---
 #define TAM_PAYLOAD 1024
@@ -62,7 +66,7 @@ void desconectar_do_servidor();
 void tratar_envio_broadcast();
 
 // --- Funções da Interface e Terminal ---
-#ifndef WIN
+#ifndef _WIN32
 struct termios estado_original_terminal;
 
 void configurar_terminal_nao_bloqueante() {
@@ -102,7 +106,7 @@ int receber_mensagem_protocolo(int sock, char *tipo_out, char *payload_out) {
 }
 
 void limpar_tela() {
-    #ifdef WIN
+    #ifdef _WIN32
         system("cls");
     #else
         system("clear");
@@ -201,9 +205,9 @@ void *thread_recebimento_p2p(void *arg) {
                 adicionar_mensagem(msg_formatada);
             }
         }
-        close(sock_peer);
+        close_socket(sock_peer);
     }
-    close(sock_listen_p2p);
+    close_socket(sock_listen_p2p);
     return NULL;
 }
 
@@ -227,7 +231,7 @@ void *thread_recebimento_servidor(void *arg) {
 
 void tratar_envio_direto() {
     menu_pausado = 1;
-    #ifndef WIN
+    #ifndef _WIN32
         restaurar_terminal();
     #endif
     limpar_tela();
@@ -278,11 +282,11 @@ void tratar_envio_direto() {
                 } else {
                     adicionar_mensagem("[SISTEMA] ERRO: Não foi possível conectar com o usuário.");
                 }
-                close(sock_p2p);
+                close_socket(sock_p2p);
             }
         }
     }
-    #ifndef WIN
+    #ifndef _WIN32
         configurar_terminal_nao_bloqueante();
     #endif
     menu_pausado = 0;
@@ -291,7 +295,7 @@ void tratar_envio_direto() {
 
 void tratar_envio_broadcast() {
     menu_pausado = 1;
-    #ifndef WIN
+    #ifndef _WIN32
         restaurar_terminal();
     #endif
     limpar_tela();
@@ -316,14 +320,14 @@ void tratar_envio_broadcast() {
                 if (connect(sock_p2p, (struct sockaddr *)&endereco_alvo, sizeof(endereco_alvo)) >= 0) {
                     enviar_mensagem_protocolo(sock_p2p, 'B', payload_final);
                 }
-                close(sock_p2p);
+                close_socket(sock_p2p);
             }
         }
         atual = atual->prox;
     }
     pthread_mutex_unlock(&mutex_lista);
     adicionar_mensagem("[SISTEMA] Mensagem de broadcast enviada.");
-    #ifndef WIN
+    #ifndef _WIN32
         configurar_terminal_nao_bloqueante();
     #endif
     menu_pausado = 0;
@@ -396,39 +400,24 @@ void exibir_menu_desconectado() {
     printf("1 - Conectar\n5 - Sair\n---------------------\nEscolha uma opção: ");
 }
 
-// #################################################
-// ### FUNÇÃO MODIFICADA ###
-// #################################################
 void conectar_ao_servidor() {
     if (conectado_ao_servidor) return;
     menu_pausado = 1;
     limpar_tela();
     char ip_servidor[16];
-
-    // MUDANÇA: Lógica para usar IP padrão se o usuário apertar Enter.
     printf("\nDigite o IP do Servidor (padrão: 127.0.0.1): ");
-    
-    // Limpa o buffer de entrada do '\n' deixado pelo scanf do menu
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
-
-    // Lê a linha inteira digitada pelo usuário
     if (fgets(ip_servidor, sizeof(ip_servidor), stdin) != NULL) {
-        // Remove o caractere '\n' do final da string, se houver
         ip_servidor[strcspn(ip_servidor, "\n")] = 0;
-
-        // Verifica se a string está vazia. Se estiver, usa o IP padrão.
         if (ip_servidor[0] == '\0') {
             strcpy(ip_servidor, "127.0.0.1");
             printf("Nenhum IP digitado. Usando o padrão: %s\n", ip_servidor);
         }
     } else {
-        // Se houver um erro no fgets, usa o padrão por segurança
         strcpy(ip_servidor, "127.0.0.1");
         printf("Entrada inválida. Usando o padrão: %s\n", ip_servidor);
     }
-    // FIM DA MUDANÇA
-
     printf("Digite o seu nome de usuário: ");
     scanf("%49s", meu_nome);
     printf("Digite a porta P2P (0 para padrão %d): ", DEFAULT_P2P_PORT);
@@ -445,7 +434,7 @@ void conectar_ao_servidor() {
     endereco_servidor.sin_port = htons(PORTA_SERVIDOR_TCP);
     if (connect(sock_servidor, (struct sockaddr *)&endereco_servidor, sizeof(endereco_servidor)) < 0) {
         printf("\n[ERRO] Falha ao conectar ao servidor %s.\n", ip_servidor);
-        close(sock_servidor);
+        close_socket(sock_servidor);
         menu_pausado = 0;
         return;
     }
@@ -455,7 +444,7 @@ void conectar_ao_servidor() {
     char tipo_ack, payload_ack[TAM_PAYLOAD];
     if (receber_mensagem_protocolo(sock_servidor, &tipo_ack, payload_ack) <= 0 || tipo_ack != 'A') {
         printf("Falha ao registrar no servidor. Resposta: '%c'.\n", tipo_ack);
-        close(sock_servidor);
+        close_socket(sock_servidor);
         menu_pausado = 0;
         printf("Pressione Enter para continuar...");
         while(getchar()!='\n'); getchar();
@@ -465,7 +454,7 @@ void conectar_ao_servidor() {
     adicionar_mensagem("[SISTEMA] Conectado e registrado com sucesso!");
     pthread_create(&p2p_thread_id, NULL, thread_recebimento_p2p, NULL);
     pthread_create(&server_thread_id, NULL, thread_recebimento_servidor, NULL);
-    #ifndef WIN
+    #ifndef _WIN32
         configurar_terminal_nao_bloqueante();
     #endif
     menu_pausado = 0;
@@ -474,15 +463,15 @@ void conectar_ao_servidor() {
 
 void desconectar_do_servidor() {
     if (!conectado_ao_servidor) return;
-    #ifndef WIN
+    #ifndef _WIN32
         restaurar_terminal();
     #endif
     enviar_mensagem_protocolo(sock_servidor, 'D', meu_nome);
     conectado_ao_servidor = 0;
-    #ifdef WIN
+    #ifdef _WIN32
         shutdown(sock_servidor, SD_BOTH);
     #endif
-    close(sock_servidor);
+    close_socket(sock_servidor);
     destruir_lista_local();
     limpar_tela();
     printf("Desconectado com sucesso.\n");
@@ -490,7 +479,7 @@ void desconectar_do_servidor() {
 
 // --- FUNÇÃO MAIN ---
 int main(void) {
-    #ifdef WIN
+    #ifdef _WIN32
         WSADATA wsaData;
         WSAStartup(MAKEWORD(2, 2), &wsaData);
     #else
@@ -505,7 +494,7 @@ int main(void) {
                 tela_precisa_atualizar = 0;
             }
             pthread_mutex_unlock(&mutex_tela);
-            #ifdef WIN
+            #ifdef _WIN32
                 if (_kbhit()) {
                     char c = _getch();
                     tratar_entrada_usuario(c);
@@ -537,10 +526,13 @@ int main(void) {
     }
     printf("\nEncerrando e aguardando threads...\n");
     cliente_rodando = 0;
-    if(p2p_thread_id) pthread_join(p2p_thread_id, NULL);
-    if(server_thread_id) pthread_join(server_thread_id, NULL);
+    // As threads só são criadas se a conexão for bem-sucedida
+    if(conectado_ao_servidor) {
+        if(p2p_thread_id) pthread_join(p2p_thread_id, NULL);
+        if(server_thread_id) pthread_join(server_thread_id, NULL);
+    }
     printf("Programa encerrado.\n");
-    #ifdef WIN
+    #ifdef _WIN32
         WSACleanup();
     #endif
     return 0;

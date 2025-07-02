@@ -6,13 +6,14 @@
     #define WIN
     #include <winsock2.h>
     #include <windows.h>
+    #define close_socket(s) closesocket(s)
 #else
     #include <sys/socket.h>
     #include <arpa/inet.h>
     #include <unistd.h>
-    #include <pthread.h>
+    #define close_socket(s) close(s)
 #endif
-
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -175,7 +176,7 @@ void *handle_client(void *arg) {
     remover_usuario(socket_cliente);
     broadcast_lista_usuarios(); // Informa aos outros que o usuário saiu
     
-    close(socket_cliente);
+    close_socket(socket_cliente);
     pthread_exit(NULL);
 }
 
@@ -226,12 +227,12 @@ int main() {
         if (pthread_create(&thread_id, NULL, handle_client, arg) != 0) {
             printf("Erro ao criar a thread para o cliente.\n");
             free(arg);
-            close(socket_cliente);
+            close_socket(socket_cliente);
         }
         pthread_detach(thread_id);
     }
 
-    close(sock_servidor);
+    close_socket(sock_servidor);
     #ifdef WIN
         WSACleanup();
     #endif

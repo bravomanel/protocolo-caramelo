@@ -217,7 +217,7 @@ void *thread_recebimento_servidor(void *arg) {
         int bytes_recebidos = receber_mensagem_protocolo(sock_servidor, &tipo, payload);
         if (bytes_recebidos <= 0) {
             if (cliente_rodando && conectado_ao_servidor) {
-                adicionar_mensagem("[SISTEMA] Conexão com o servidor perdida.");
+                adicionar_mensagem("[SISTEMA] Conexao com o servidor perdida.");
                 conectado_ao_servidor = 0;
                 destruir_lista_local();
                 tela_precisa_atualizar = 1;
@@ -236,7 +236,7 @@ void tratar_envio_direto() {
     #endif
     limpar_tela();
     printf("--- Envio de Mensagem Direta (DM) ---\n\n");
-    printf("Usuários disponíveis para contato:\n");
+    printf("Usuarios disponíveis para contato:\n");
     pthread_mutex_lock(&mutex_lista);
     Usuario *user_iter = lista_usuarios;
     int users_found = 0;
@@ -248,18 +248,18 @@ void tratar_envio_direto() {
         user_iter = user_iter->prox;
     }
     if (users_found == 0) {
-        printf("Nenhum outro usuário online no momento.\n");
+        printf("Nenhum outro usuario online no momento.\n");
     }
     pthread_mutex_unlock(&mutex_lista);
     printf("----------------------------------\n");
     char nome_destino[50];
-    printf("\nDigite o nome do destinatário (ou 'cancelar' para voltar): ");
+    printf("\nDigite o nome do destinatario (ou 'cancelar' para voltar): ");
     scanf("%49s", nome_destino);
     if (strcmp(nome_destino, "cancelar") == 0) {
     } else {
         Usuario* alvo = encontrar_usuario(nome_destino);
         if (alvo == NULL || strcmp(alvo->nome, meu_nome) == 0) {
-            printf("\n[ERRO] Usuário inválido ou não encontrado.\n Pressione Enter para voltar...");
+            printf("\n[ERRO] Usuario invalido ou nao encontrado.\n Pressione Enter para voltar...");
             while (getchar() != '\n'); getchar();
         } else {
             char mensagem[TAM_PAYLOAD - 60];
@@ -338,11 +338,11 @@ void redesenhar_tela_principal() {
     limpar_tela();
     printf("--- CHAT CARAMELO ---\n");
     printf("Logado como: %s\n\n", meu_nome);
-    printf("USUÁRIOS ONLINE:\n");
+    printf("USUARIOS ONLINE:\n");
     pthread_mutex_lock(&mutex_lista);
     Usuario *atual = lista_usuarios;
     if (atual == NULL) {
-        printf("Nenhum usuário conectado.\n");
+        printf("Nenhum usuario conectado.\n");
     } else {
         int count = 0;
         while(atual != NULL) {
@@ -355,7 +355,7 @@ void redesenhar_tela_principal() {
     }
     pthread_mutex_unlock(&mutex_lista);
     printf("-----------------------------------------------------------\n\n");
-    printf("ÚLTIMAS MENSAGENS:\n");
+    printf("ULTIMAS MENSAGENS:\n");
     pthread_mutex_lock(&mutex_mensagens);
     if (total_mensagens_armazenadas == 0) {
         printf("Nenhuma mensagem ainda.\n");
@@ -369,7 +369,7 @@ void redesenhar_tela_principal() {
     pthread_mutex_unlock(&mutex_mensagens);
     printf("-----------------------------------------------------------\n");
     if (novas_mensagens_na_pausa > 0) {
-        printf("[!] Existem %d mensagens novas! A tela será atualizada.\n", novas_mensagens_na_pausa);
+        printf("[!] Existem %d novas mensagens!\n", novas_mensagens_na_pausa);
         novas_mensagens_na_pausa = 0;
     }
     printf("--- MENU ---\n");
@@ -378,7 +378,7 @@ void redesenhar_tela_principal() {
     printf("4 - Enviar Mensagem Individual\n");
     printf("5 - Sair\n");
     printf("------------\n");
-    printf("Escolha uma opção: ");
+    printf("Escolha uma opcao: ");
     fflush(stdout);
 }
 
@@ -397,7 +397,7 @@ void tratar_entrada_usuario(char c) {
 void exibir_menu_desconectado() {
     limpar_tela();
     printf("\n--- CHAT CARAMELO ---\n     DESCONECTADO\n---------------------\n");
-    printf("1 - Conectar\n5 - Sair\n---------------------\nEscolha uma opção: ");
+    printf("1 - Conectar\n5 - Sair\n---------------------\nEscolha uma opcao: ");
 }
 
 void conectar_ao_servidor() {
@@ -405,22 +405,22 @@ void conectar_ao_servidor() {
     menu_pausado = 1;
     limpar_tela();
     char ip_servidor[16];
-    printf("\nDigite o IP do Servidor (padrão: 127.0.0.1): ");
+    printf("\nDigite o IP do Servidor (padrao: 127.0.0.1): ");
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
     if (fgets(ip_servidor, sizeof(ip_servidor), stdin) != NULL) {
         ip_servidor[strcspn(ip_servidor, "\n")] = 0;
         if (ip_servidor[0] == '\0') {
             strcpy(ip_servidor, "127.0.0.1");
-            printf("Nenhum IP digitado. Usando o padrão: %s\n", ip_servidor);
+            printf("Nenhum IP digitado. Usando o padrao: %s\n", ip_servidor);
         }
     } else {
         strcpy(ip_servidor, "127.0.0.1");
-        printf("Entrada inválida. Usando o padrão: %s\n", ip_servidor);
+        printf("Entrada inválida. Usando o padrao: %s\n", ip_servidor);
     }
-    printf("Digite o seu nome de usuário: ");
+    printf("Digite o seu nome de usuario: ");
     scanf("%49s", meu_nome);
-    printf("Digite a porta P2P (0 para padrão %d): ", DEFAULT_P2P_PORT);
+    printf("Digite a porta P2P (0 para padrao %d): ", DEFAULT_P2P_PORT);
     scanf("%d", &minha_porta_p2p);
     if (minha_porta_p2p == 0) minha_porta_p2p = DEFAULT_P2P_PORT;
     strcpy(meu_ip, "127.0.0.1");

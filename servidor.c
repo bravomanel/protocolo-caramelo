@@ -85,7 +85,7 @@ void adicionar_usuario(int socket_fd, const char* ip, const char* nome, int port
     lista_usuarios = novo;
     pthread_mutex_unlock(&mutex_lista);
 
-    printf("[INFO] Usuário '%s' (%s:%d) conectado via socket %d.\n", nome, ip, porta_p2p, socket_fd);
+    printf("[INFO] Usuario '%s' (%s:%d) conectado via socket %d.\n", nome, ip, porta_p2p, socket_fd);
 }
 
 void remover_usuario(int socket_fd) {
@@ -103,7 +103,7 @@ void remover_usuario(int socket_fd) {
         if (anterior == NULL) lista_usuarios = atual->prox;
         else anterior->prox = atual->prox;
         free(atual);
-        printf("[INFO] Usuário '%s' (socket %d) desconectado.\n", nome_removido, socket_fd);
+        printf("[INFO] Usuario '%s' (socket %d) desconectado.\n", nome_removido, socket_fd);
     }
     
     pthread_mutex_unlock(&mutex_lista);
@@ -149,7 +149,7 @@ void *handle_client(void *arg) {
         int bytes_recebidos = receber_mensagem_protocolo(socket_cliente, &tipo_msg, payload);
         
         if (bytes_recebidos <= 0) {
-            printf("[INFO] Cliente no socket %d encerrou a conexão.\n", socket_cliente);
+            printf("[INFO] Cliente no socket %d encerrou a conexao.\n", socket_cliente);
             break;
         }
 
@@ -165,7 +165,7 @@ void *handle_client(void *arg) {
             broadcast_lista_usuarios();
 
         } else if (registrado && tipo_msg == 'D') {
-            printf("[INFO] Cliente '%s' solicitou desconexão.\n", payload);
+            printf("[INFO] Cliente '%s' solicitou desconexao.\n", payload);
             break; // Sai do loop para remover e fechar
         
         } else {
@@ -210,7 +210,7 @@ int main() {
         printf("Erro no listen()\n"); return 1;
     }
 
-    printf("Servidor Caramelo iniciado na porta %d. Aguardando conexões...\n", PORTA_SERVIDOR_TCP);
+    printf("Servidor Caramelo iniciado na porta %d. Aguardando conexoes...\n", PORTA_SERVIDOR_TCP);
 
     while (1) {
         int socket_cliente = accept(sock_servidor, NULL, NULL);

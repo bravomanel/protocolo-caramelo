@@ -1,8 +1,9 @@
 // No Code::Blocks, inclua as bibliotecas: -lwsock32 -lpthread
 // No Linux/gcc, compile com: gcc -o servidor servidor.c -lpthread
 
-// #define WIN // Descomente para compilar no Windows
-#ifdef WIN
+
+#ifdef _WIN32
+    #define WIN
     #include <winsock2.h>
     #include <windows.h>
 #else
@@ -16,7 +17,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TAM_MENSAGEM 1000
+#define TAM_PAYLOAD 1024
+#define TAM_MSG_COMPLETA (TAM_PAYLOAD + 4) // 3 para tamanho, 1 para tipo
 #define PORTA_SERVIDOR_TCP 9999
 #define MAXPENDING 10
 #define MAX_CLIENTS 100
@@ -33,6 +35,41 @@ typedef struct Usuario {
 Usuario *lista_usuarios = NULL;
 pthread_mutex_t mutex_lista = PTHREAD_MUTEX_INITIALIZER;
 
+// --- FUNCOES AUXILIARES DO PROTOCOLO ---
+
+// Envia uma mensagem formatada de acordo com o protocolo: <LEN><TIPO><PAYLOAD>
+int enviar_mensagem_protocolo(int sock, char tipo, const char *payload) {
+    char buffer[TAM_MSG_COMPLETA];
+    int tamanho_payload = strlen(payload);
+    int tamanho_total = 1 + tamanho_payload; // 1 para o tipo
+
+    snprintf(buffer, TAM_MSG_COMPLETA, "%03d%c%s", tamanho_total, tipo, payload);
+    
+    return send(sock, buffer, 3 + tamanho_total, 0);
+}
+
+// Recebe uma mensagem formatada
+int receber_mensagem_protocolo(int sock, char *tipo_out, char *payload_out) {
+    char len_str[4] = {0};
+    int bytes_lidos = recv(sock, len_str, 3, 0);
+    if (bytes_lidos <= 0) return bytes_lidos;
+
+    int tamanho_a_ler = atoi(len_str);
+    if (tamanho_a_ler > TAM_PAYLOAD) { // Proteção contra overflow
+        printf("[ERRO] Payload muito grande recebido: %d\n", tamanho_a_ler);
+        return -1;
+    }
+    
+    char buffer_temp[TAM_MSG_COMPLETA] = {0};
+    bytes_lidos = recv(sock, buffer_temp, tamanho_a_ler, 0);
+    if (bytes_lidos <= 0) return bytes_lidos;
+    
+    *tipo_out = buffer_temp[0];
+    strcpy(payload_out, buffer_temp + 1);
+
+    return bytes_lidos;
+}
+
 // --- FUNÇÕES DE GERENCIAMENTO DA LISTA ---
 
 void adicionar_usuario(int socket_fd, const char* ip, const char* nome, int porta_p2p) {
@@ -47,13 +84,13 @@ void adicionar_usuario(int socket_fd, const char* ip, const char* nome, int port
     lista_usuarios = novo;
     pthread_mutex_unlock(&mutex_lista);
 
-    printf("[INFO] Usuário '%s' (%s:%d) conectado.\n", nome, ip, porta_p2p);
+    printf("[INFO] Usuário '%s' (%s:%d) conectado via socket %d.\n", nome, ip, porta_p2p, socket_fd);
 }
 
-void remover_usuario(int socket_fd, char* nome_removido_out) {
+void remover_usuario(int socket_fd) {
     pthread_mutex_lock(&mutex_lista);
     Usuario *atual = lista_usuarios, *anterior = NULL;
-    int encontrado = 0;
+    char nome_removido[50] = "desconhecido";
 
     while (atual != NULL && atual->socket_fd != socket_fd) {
         anterior = atual;
@@ -61,104 +98,82 @@ void remover_usuario(int socket_fd, char* nome_removido_out) {
     }
 
     if (atual != NULL) {
-        strcpy(nome_removido_out, atual->nome);
-        encontrado = 1;
+        strcpy(nome_removido, atual->nome);
         if (anterior == NULL) lista_usuarios = atual->prox;
         else anterior->prox = atual->prox;
         free(atual);
+        printf("[INFO] Usuário '%s' (socket %d) desconectado.\n", nome_removido, socket_fd);
     }
     
     pthread_mutex_unlock(&mutex_lista);
-    
-    if (encontrado) {
-        printf("[INFO] Usuário '%s' desconectado.\n", nome_removido_out);
-    }
 }
 
 void broadcast_lista_usuarios() {
-    char buffer_lista[TAM_MENSAGEM * 10];
+    char buffer_lista[TAM_PAYLOAD] = {0};
     char buffer_usuario[100];
     int sockets_para_enviar[MAX_CLIENTS];
     int num_clientes = 0;
 
     pthread_mutex_lock(&mutex_lista);
 
-    memset(buffer_lista, 0, sizeof(buffer_lista));
-    strcpy(buffer_lista, "L");
     Usuario *atual = lista_usuarios;
-    if (atual == NULL) {
-        strcat(buffer_lista, "|");
-    } else {
-        while (atual != NULL) {
-            snprintf(buffer_usuario, 100, "%s:%s:%d|", atual->nome, atual->ip, atual->porta_p2p);
-            strcat(buffer_lista, buffer_usuario);
-            atual = atual->prox;
-        }
-    }
-    
-    atual = lista_usuarios;
-    while (atual != NULL && num_clientes < MAX_CLIENTS) {
+    while (atual != NULL) {
+        snprintf(buffer_usuario, 100, "%s:%s:%d|", atual->nome, atual->ip, atual->porta_p2p);
+        strcat(buffer_lista, buffer_usuario);
         sockets_para_enviar[num_clientes++] = atual->socket_fd;
         atual = atual->prox;
     }
-
+    
     pthread_mutex_unlock(&mutex_lista);
 
-    printf("[BROADCAST] Enviando lista para %d cliente(s): %s\n", num_clientes, buffer_lista);
-    for (int i = 0; i < num_clientes; i++) {
-        if (send(sockets_para_enviar[i], buffer_lista, strlen(buffer_lista), 0) < 0) {
+    if(num_clientes > 0) {
+        printf("[BROADCAST] Enviando lista para %d cliente(s): %s\n", num_clientes, buffer_lista);
+        for (int i = 0; i < num_clientes; i++) {
+            enviar_mensagem_protocolo(sockets_para_enviar[i], 'L', buffer_lista);
         }
     }
 }
 
-// --- LÓGICA DE PROCESSAMENTO DE MENSAGENS E THREAD ---
-
-void processar_registro(char *msg, int sock, const char* ip_cliente) {
-    char copia[TAM_MENSAGEM];
-    strcpy(copia, msg);
-
-    char *payload = copia + 1;
-    strtok(payload, "|");
-    char *porta_str = strtok(NULL, "|");
-    char *nome = strtok(NULL, "|");
-
-    if (porta_str && nome) {
-        adicionar_usuario(sock, ip_cliente, nome, atoi(porta_str));
-    } else {
-        printf("[ERRO] Mensagem de registro mal formada: %s\n", msg);
-    }
-}
+// --- THREAD DE TRATAMENTO DO CLIENTE ---
 
 void *handle_client(void *arg) {
-    int socket_cliente = ((struct Usuario*)arg)->socket_fd;
-    char ip_cliente[16];
-    strcpy(ip_cliente, ((struct Usuario*)arg)->ip);
+    int socket_cliente = *(int*)arg;
     free(arg);
 
-    char buffer[TAM_MENSAGEM];
-    int bytes_recebidos;
+    char tipo_msg;
+    char payload[TAM_PAYLOAD];
     int registrado = 0;
 
-    while ((bytes_recebidos = recv(socket_cliente, buffer, TAM_MENSAGEM, 0)) > 0) {
-        buffer[bytes_recebidos] = '\0';
-        char tipo = buffer[0];
+    while (1) {
+        int bytes_recebidos = receber_mensagem_protocolo(socket_cliente, &tipo_msg, payload);
+        
+        if (bytes_recebidos <= 0) {
+            printf("[INFO] Cliente no socket %d encerrou a conexão.\n", socket_cliente);
+            break;
+        }
 
-        if (!registrado && tipo == 'R') {
-            processar_registro(buffer, socket_cliente, ip_cliente);
+        if (!registrado && tipo_msg == 'R') {
+            char ip[16], nome[50];
+            int porta_p2p;
+            // Payload: <IP>|<PORTA>|<NOME>|
+            sscanf(payload, "%15[^|]|%d|%49[^|]|", ip, &porta_p2p, nome);
+            
+            adicionar_usuario(socket_cliente, ip, nome, porta_p2p);
+            enviar_mensagem_protocolo(socket_cliente, 'A', ""); // Envia Ack de confirmação
             registrado = 1;
             broadcast_lista_usuarios();
-        } else if (registrado && tipo == 'D') {
-            break;
+
+        } else if (registrado && tipo_msg == 'D') {
+            printf("[INFO] Cliente '%s' solicitou desconexão.\n", payload);
+            break; // Sai do loop para remover e fechar
+        
         } else {
-            printf("[AVISO] Mensagem inesperada do socket %d: %s\n", socket_cliente, buffer);
+            printf("[AVISO] Mensagem inesperada do socket %d: Tipo %c\n", socket_cliente, tipo_msg);
         }
     }
     
-    char nome_removido[50] = "desconhecido";
-    remover_usuario(socket_cliente, nome_removido);
-    if (strcmp(nome_removido, "desconhecido") != 0) {
-        broadcast_lista_usuarios();
-    }
+    remover_usuario(socket_cliente);
+    broadcast_lista_usuarios(); // Informa aos outros que o usuário saiu
     
     close(socket_cliente);
     pthread_exit(NULL);
@@ -196,29 +211,24 @@ int main() {
 
     printf("Servidor Caramelo iniciado na porta %d. Aguardando conexões...\n", PORTA_SERVIDOR_TCP);
 
-    while (1) { // Loop principal para aceitar novas conexões
-        struct sockaddr_in endereco_cliente;
-        socklen_t tamanho_endereco = sizeof(endereco_cliente);
-        int socket_cliente = accept(sock_servidor, (struct sockaddr *) &endereco_cliente, &tamanho_endereco);
+    while (1) {
+        int socket_cliente = accept(sock_servidor, NULL, NULL);
 
         if (socket_cliente < 0) {
             printf("Erro no accept()\n");
-            continue; // Continua para a próxima tentativa de conexão
+            continue;
         }
         
-        // Prepara os dados para passar para a nova thread
-        Usuario *args = (Usuario*)malloc(sizeof(Usuario));
-        args->socket_fd = socket_cliente;
-        strcpy(args->ip, inet_ntoa(endereco_cliente.sin_addr));
+        int *arg = malloc(sizeof(int));
+        *arg = socket_cliente;
 
-        // Cria uma thread para cuidar do novo cliente
         pthread_t thread_id;
-        if (pthread_create(&thread_id, NULL, handle_client, (void*)args) != 0) {
+        if (pthread_create(&thread_id, NULL, handle_client, arg) != 0) {
             printf("Erro ao criar a thread para o cliente.\n");
-            free(args);
+            free(arg);
             close(socket_cliente);
         }
-        pthread_detach(thread_id); // Não precisamos esperar a thread terminar
+        pthread_detach(thread_id);
     }
 
     close(sock_servidor);

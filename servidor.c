@@ -47,11 +47,12 @@ pthread_mutex_t mutex_lista = PTHREAD_MUTEX_INITIALIZER;
 int enviar_mensagem_protocolo(int sock, char tipo, const char *payload) {
     char buffer[TAM_MSG_COMPLETA];
     int tamanho_payload = strlen(payload);
-    int tamanho_total = 1 + tamanho_payload; // 1 para o tipo
 
-    snprintf(buffer, TAM_MSG_COMPLETA, "%03d%c%s", tamanho_total, tipo, payload);
+    snprintf(buffer, TAM_MSG_COMPLETA, "%03d%c%s", tamanho_payload, tipo, payload);
+
+    printf("[DEBUG-SEND] Servidor enviando para socket %d: \"%s\"\n", sock, buffer);
     
-    return send(sock, buffer, 3 + tamanho_total, 0);
+    return send(sock, buffer, 4 + tamanho_payload, 0);
 }
 
 // Recebe uma mensagem formatada
@@ -60,12 +61,13 @@ int receber_mensagem_protocolo(int sock, char *tipo_out, char *payload_out) {
     int bytes_lidos = recv(sock, len_str, 3, 0);
     if (bytes_lidos <= 0) return bytes_lidos;
 
-    int tamanho_a_ler = atoi(len_str);
-    if (tamanho_a_ler > TAM_PAYLOAD) { // Proteção contra overflow
-        printf("[ERRO] Payload muito grande recebido: %d\n", tamanho_a_ler);
+    int tamanho_payload = atoi(len_str);
+    if (tamanho_payload > TAM_PAYLOAD) { // Proteção contra overflow
+        printf("[ERRO] Payload muito grande recebido: %d\n", tamanho_payload);
         return -1;
     }
     
+    int tamanho_a_ler = 1 + tamanho_payload;
     char buffer_temp[TAM_MSG_COMPLETA] = {0};
     bytes_lidos = recv(sock, buffer_temp, tamanho_a_ler, 0);
     if (bytes_lidos <= 0) return bytes_lidos;

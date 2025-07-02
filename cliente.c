@@ -84,22 +84,25 @@ void restaurar_terminal() {
 int enviar_mensagem_protocolo(int sock, char tipo, const char *payload) {
     char buffer[TAM_MSG_COMPLETA];
     int tamanho_payload = strlen(payload);
-    int tamanho_total_msg = 1 + tamanho_payload;
-    snprintf(buffer, TAM_MSG_COMPLETA, "%03d%c%s", tamanho_total_msg, tipo, payload);
-    return send(sock, buffer, 3 + tamanho_total_msg, 0);
+    snprintf(buffer, TAM_MSG_COMPLETA, "%03d%c%s", tamanho_payload, tipo, payload);
+    return send(sock, buffer, 4 + tamanho_payload, 0);
 }
 
 int receber_mensagem_protocolo(int sock, char *tipo_out, char *payload_out) {
     char len_str[4] = {0};
     int bytes_lidos = recv(sock, len_str, 3, 0);
     if (bytes_lidos <= 0) return bytes_lidos;
-    int tamanho_a_ler = atoi(len_str);
-    if (tamanho_a_ler > TAM_PAYLOAD + 1) {
+
+    int tamanho_payload = atoi(len_str);
+    if (tamanho_payload > TAM_PAYLOAD) {
         return -1;
     }
+
+    int tamanho_a_ler = 1 + tamanho_payload;
     char buffer_temp[TAM_MSG_COMPLETA] = {0};
     bytes_lidos = recv(sock, buffer_temp, tamanho_a_ler, 0);
     if (bytes_lidos <= 0) return bytes_lidos;
+
     *tipo_out = buffer_temp[0];
     strcpy(payload_out, buffer_temp + 1);
     return bytes_lidos;
@@ -313,17 +316,17 @@ void tratar_envio_broadcast() {
     while(atual != NULL) {
         if (strcmp(atual->nome, meu_nome) != 0) {
              int sock_p2p = socket(PF_INET, SOCK_STREAM, 0);
-             if (sock_p2p >= 0) {
-                struct sockaddr_in endereco_alvo;
-                memset(&endereco_alvo, 0, sizeof(endereco_alvo));
-                endereco_alvo.sin_family = AF_INET;
-                endereco_alvo.sin_addr.s_addr = inet_addr(atual->ip);
-                endereco_alvo.sin_port = htons(atual->porta);
-                if (connect(sock_p2p, (struct sockaddr *)&endereco_alvo, sizeof(endereco_alvo)) >= 0) {
-                    enviar_mensagem_protocolo(sock_p2p, 'B', payload_final);
-                }
-                close_socket(sock_p2p);
-            }
+              if (sock_p2p >= 0) {
+                  struct sockaddr_in endereco_alvo;
+                  memset(&endereco_alvo, 0, sizeof(endereco_alvo));
+                  endereco_alvo.sin_family = AF_INET;
+                  endereco_alvo.sin_addr.s_addr = inet_addr(atual->ip);
+                  endereco_alvo.sin_port = htons(atual->porta);
+                  if (connect(sock_p2p, (struct sockaddr *)&endereco_alvo, sizeof(endereco_alvo)) >= 0) {
+                      enviar_mensagem_protocolo(sock_p2p, 'B', payload_final);
+                  }
+                  close_socket(sock_p2p);
+              }
         }
         atual = atual->prox;
     }
@@ -393,7 +396,7 @@ void tratar_entrada_usuario(char c) {
 
 void exibir_menu_desconectado() {
     limpar_tela();
-    printf("\n--- CHAT CARAMELO ---\n     DESCONECTADO\n---------------------\n");
+    printf("\n--- CHAT CARAMELO ---\n    DESCONECTADO\n---------------------\n");
     printf("1 - Conectar\n5 - Sair\n---------------------\nEscolha uma opcao: ");
 }
 

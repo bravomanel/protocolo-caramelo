@@ -187,6 +187,41 @@ void tratar_envio_direto() {
     close(sock_p2p);
 }
 
+void tratar_envio_broadcast(){
+  char mensagem[TAM_PAYLOAD - 60]; // Deixa espaço para o nome
+  
+  printf("Digite a sua mensagem broadcast: ");
+  while (getchar() != '\n');
+  fgets(mensagem, sizeof(mensagem), stdin);
+  mensagem[strcspn(mensagem, "\n")] = 0;
+    
+  char payload_final[TAM_PAYLOAD];
+  snprintf(payload_final, TAM_PAYLOAD, "%s|%s|", meu_nome, mensagem);
+  pthread_mutex_lock(&mutex_lista);
+    
+  Usuario *atual = lista_usuarios;
+  while(atual != NULL) {
+      if (strcmp(atual->nome, meu_nome) != 0) {
+          int sock_p2p = socket(PF_INET, SOCK_STREAM, 0);
+          if (sock_p2p >= 0) {
+              struct sockaddr_in endereco_alvo;
+              memset(&endereco_alvo, 0, sizeof(endereco_alvo));
+              endereco_alvo.sin_family = AF_INET;
+              endereco_alvo.sin_addr.s_addr = inet_addr(atual->ip);
+              endereco_alvo.sin_port = htons(atual->porta);
+              
+              if (connect(sock_p2p, (struct sockaddr *)&endereco_alvo, sizeof(endereco_alvo)) >= 0) {
+                  enviar_mensagem_protocolo(sock_p2p, 'B', payload_final);
+              }
+              close(sock_p2p);
+          }
+      }
+      atual = atual->prox;
+  }
+  pthread_mutex_unlock(&mutex_lista);
+  printf("\n[INFO] Mensagem de broadcast enviada.\n");
+}
+
 
 void tratar_desconexao() {
     printf("\nDesconectando do servidor...\n");
@@ -198,8 +233,9 @@ void tratar_desconexao() {
 void exibir_menu() {
     printf("\n--- CHAT CARAMELO ---\n");
     printf("1 - Enviar mensagem direta (DM)\n");
-    printf("2 - Listar usuários online\n");
-    printf("3 - Sair\n");
+    printf("2 - Enviar mensagem broadcast\n");
+    printf("3 - Listar usuários online\n");
+    printf("4 - Sair\n");
     printf("> ");
 }
 
@@ -330,8 +366,9 @@ int main(int argc, char *argv[]) {
         if (!cliente_rodando) break;
         switch (escolha) {
             case 1: tratar_envio_direto(); break;
-            case 2: imprimir_lista_local(); break;
-            case 3: tratar_desconexao(); break;
+            case 2: tratar_envio_broadcast(); break;
+            case 3: imprimir_lista_local(); break;
+            case 4: tratar_desconexao(); break;
             default: printf("\nOpção inválida!\n"); break;
         }
     }

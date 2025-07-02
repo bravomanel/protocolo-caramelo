@@ -6,13 +6,14 @@
     #define WIN
     #include <winsock2.h>
     #include <windows.h>
+    #define close_socket(s) closesocket(s)
 #else
     #include <sys/socket.h>
     #include <arpa/inet.h>
     #include <unistd.h>
-    #include <pthread.h>
+    #define close_socket(s) close(s)
 #endif
-
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,11 @@
 #define PORTA_SERVIDOR_TCP 9999
 #define MAXPENDING 10
 #define MAX_CLIENTS 100
+#define TIMEOUT_INATIVIDADE 300 // 300 segundos = 5 minutos
+
+// --- VARIÁVEL GLOBAL DE ÚLTIMA INTERAÇÃO ---
+time_t ultima_interacao_global = 0;
+pthread_mutex_t mutex_interacao = PTHREAD_MUTEX_INITIALIZER;
 
 // --- ESTRUTURA E LISTA GLOBAL DE USUÁRIOS ---
 typedef struct Usuario {
@@ -84,7 +90,7 @@ void adicionar_usuario(int socket_fd, const char* ip, const char* nome, int port
     lista_usuarios = novo;
     pthread_mutex_unlock(&mutex_lista);
 
-    printf("[INFO] Usuário '%s' (%s:%d) conectado via socket %d.\n", nome, ip, porta_p2p, socket_fd);
+    printf("[INFO] Usuario '%s' (%s:%d) conectado via socket %d.\n", nome, ip, porta_p2p, socket_fd);
 }
 
 void remover_usuario(int socket_fd) {
@@ -102,7 +108,7 @@ void remover_usuario(int socket_fd) {
         if (anterior == NULL) lista_usuarios = atual->prox;
         else anterior->prox = atual->prox;
         free(atual);
-        printf("[INFO] Usuário '%s' (socket %d) desconectado.\n", nome_removido, socket_fd);
+        printf("[INFO] Usuario '%s' (socket %d) desconectado.\n", nome_removido, socket_fd);
     }
     
     pthread_mutex_unlock(&mutex_lista);
@@ -132,10 +138,59 @@ void broadcast_lista_usuarios() {
             enviar_mensagem_protocolo(sockets_para_enviar[i], 'L', buffer_lista);
         }
     }
+    
+    // Atualiza a última interação global
+    pthread_mutex_lock(&mutex_interacao);
+    ultima_interacao_global = time(NULL);
+    pthread_mutex_unlock(&mutex_interacao);
+}
+
+void broadcast_mensagem_geral() {
+    pthread_mutex_lock(&mutex_lista);
+    Usuario *atual = lista_usuarios;
+    while (atual != NULL) {
+        enviar_mensagem_protocolo(atual->socket_fd, 'B', "");
+        atual = atual->prox;
+    }
+    pthread_mutex_unlock(&mutex_lista);
+}
+
+// --- THREAD TIMER PARA VERIFICAR INATIVIDADE ---
+void *timer_inatividade(void *arg) {
+    (void)arg; // Não usado
+    
+    while (1) {
+        sleep(TIMEOUT_INATIVIDADE);
+        
+        time_t agora = time(NULL);
+        time_t ultima_interacao;
+        int num_clientes = 0;
+        
+        // Verifica quantos clientes estão conectados
+        pthread_mutex_lock(&mutex_lista);
+        Usuario *atual = lista_usuarios;
+        while (atual != NULL) {
+            num_clientes++;
+            atual = atual->prox;
+        }
+        pthread_mutex_unlock(&mutex_lista);
+        
+        // Obtém o timestamp da última interação
+        pthread_mutex_lock(&mutex_interacao);
+        ultima_interacao = ultima_interacao_global;
+        pthread_mutex_unlock(&mutex_interacao);
+        
+        // Se houver clientes e não houver interação no período
+        if (num_clientes > 0 && difftime(agora, ultima_interacao) >= TIMEOUT_INATIVIDADE) {
+            printf("[TIMER] Nenhuma interação nos últimos %d segundos. Enviando mensagem de alerta.\n", TIMEOUT_INATIVIDADE);
+            broadcast_mensagem_geral();
+        }
+    }
+    
+    return NULL;
 }
 
 // --- THREAD DE TRATAMENTO DO CLIENTE ---
-
 void *handle_client(void *arg) {
     int socket_cliente = *(int*)arg;
     free(arg);
@@ -148,7 +203,7 @@ void *handle_client(void *arg) {
         int bytes_recebidos = receber_mensagem_protocolo(socket_cliente, &tipo_msg, payload);
         
         if (bytes_recebidos <= 0) {
-            printf("[INFO] Cliente no socket %d encerrou a conexão.\n", socket_cliente);
+            printf("[INFO] Cliente no socket %d encerrou a conexao.\n", socket_cliente);
             break;
         }
 
@@ -164,7 +219,7 @@ void *handle_client(void *arg) {
             broadcast_lista_usuarios();
 
         } else if (registrado && tipo_msg == 'D') {
-            printf("[INFO] Cliente '%s' solicitou desconexão.\n", payload);
+            printf("[INFO] Cliente '%s' solicitou desconexao.\n", payload);
             break; // Sai do loop para remover e fechar
         
         } else {
@@ -175,7 +230,7 @@ void *handle_client(void *arg) {
     remover_usuario(socket_cliente);
     broadcast_lista_usuarios(); // Informa aos outros que o usuário saiu
     
-    close(socket_cliente);
+    close_socket(socket_cliente);
     pthread_exit(NULL);
 }
 
@@ -209,7 +264,14 @@ int main() {
         printf("Erro no listen()\n"); return 1;
     }
 
-    printf("Servidor Caramelo iniciado na porta %d. Aguardando conexões...\n", PORTA_SERVIDOR_TCP);
+    printf("Servidor Caramelo iniciado na porta %d. Aguardando conexoes...\n", PORTA_SERVIDOR_TCP);
+    
+    // Inicia a thread do timer
+    pthread_t thread_timer;
+    if (pthread_create(&thread_timer, NULL, timer_inatividade, NULL) != 0) {
+        printf("Erro ao criar thread do timer\n");
+    }
+    pthread_detach(thread_timer);
 
     while (1) {
         int socket_cliente = accept(sock_servidor, NULL, NULL);
@@ -226,12 +288,12 @@ int main() {
         if (pthread_create(&thread_id, NULL, handle_client, arg) != 0) {
             printf("Erro ao criar a thread para o cliente.\n");
             free(arg);
-            close(socket_cliente);
+            close_socket(socket_cliente);
         }
         pthread_detach(thread_id);
     }
 
-    close(sock_servidor);
+    close_socket(sock_servidor);
     #ifdef WIN
         WSACleanup();
     #endif

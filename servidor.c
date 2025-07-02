@@ -265,7 +265,7 @@ int main() {
     }
 
     printf("Servidor Caramelo iniciado na porta %d. Aguardando conexoes...\n", PORTA_SERVIDOR_TCP);
-    
+
     // Inicia a thread do timer
     pthread_t thread_timer;
     if (pthread_create(&thread_timer, NULL, timer_inatividade, NULL) != 0) {

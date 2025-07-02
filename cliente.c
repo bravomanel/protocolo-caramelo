@@ -226,6 +226,7 @@ void *thread_recebimento_servidor(void *arg) {
         }
         if (tipo == 'L') processar_e_atualizar_lista(payload);
         if (tipo == 'B') adicionar_mensagem("[SISTEMA] acorda povo!!!");
+
     }
     return NULL;
 }

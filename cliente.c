@@ -260,8 +260,7 @@ void tratar_envio_direto() {
     char nome_destino[50];
     printf("\nDigite o nome do destinatario (ou 'cancelar' para voltar): ");
     scanf("%49s", nome_destino);
-    if (strcmp(nome_destino, "cancelar") == 0) {
-    } else {
+    if (strcmp(nome_destino, "cancelar") != 0) {
         Usuario* alvo = encontrar_usuario(nome_destino);
         if (alvo == NULL || strcmp(alvo->nome, meu_nome) == 0) {
             printf("\n[ERRO] Usuario invalido ou nao encontrado.\n Pressione Enter para voltar...");

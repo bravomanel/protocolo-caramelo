@@ -16,13 +16,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TAM_MENSAGEM 256
+#define TAM_MENSAGEM 1000
 #define PORTA_SERVIDOR_TCP 9999
 #define MAXPENDING 10
+#define MAX_CLIENTS 100
 
 // --- ESTRUTURA E LISTA GLOBAL DE USUÁRIOS ---
 typedef struct Usuario {
-    int socket_fd; // Socket da conexão com este cliente
+    int socket_fd;
     char ip[16];
     char nome[50];
     int porta_p2p;
@@ -32,9 +33,7 @@ typedef struct Usuario {
 Usuario *lista_usuarios = NULL;
 pthread_mutex_t mutex_lista = PTHREAD_MUTEX_INITIALIZER;
 
-// --- FUNÇÕES DE GERENCIAMENTO DA LISTA (THREAD-SAFE) ---
-
-void broadcast_lista_usuarios(); // Protótipo
+// --- FUNÇÕES DE GERENCIAMENTO DA LISTA ---
 
 void adicionar_usuario(int socket_fd, const char* ip, const char* nome, int porta_p2p) {
     Usuario* novo = (Usuario*)malloc(sizeof(Usuario));
@@ -49,77 +48,77 @@ void adicionar_usuario(int socket_fd, const char* ip, const char* nome, int port
     pthread_mutex_unlock(&mutex_lista);
 
     printf("[INFO] Usuário '%s' (%s:%d) conectado.\n", nome, ip, porta_p2p);
-    broadcast_lista_usuarios();
 }
 
-void remover_usuario(int socket_fd) {
+void remover_usuario(int socket_fd, char* nome_removido_out) {
     pthread_mutex_lock(&mutex_lista);
     Usuario *atual = lista_usuarios, *anterior = NULL;
-    char nome_removido[50] = "desconhecido";
+    int encontrado = 0;
 
     while (atual != NULL && atual->socket_fd != socket_fd) {
         anterior = atual;
         atual = atual->prox;
     }
 
-    if (atual == NULL) { // Não encontrou
-        pthread_mutex_unlock(&mutex_lista);
-        return;
+    if (atual != NULL) {
+        strcpy(nome_removido_out, atual->nome);
+        encontrado = 1;
+        if (anterior == NULL) lista_usuarios = atual->prox;
+        else anterior->prox = atual->prox;
+        free(atual);
     }
-
-    strcpy(nome_removido, atual->nome);
-
-    if (anterior == NULL) lista_usuarios = atual->prox;
-    else anterior->prox = atual->prox;
     
-    free(atual);
     pthread_mutex_unlock(&mutex_lista);
     
-    printf("[INFO] Usuário '%s' desconectado.\n", nome_removido);
-    broadcast_lista_usuarios();
+    if (encontrado) {
+        printf("[INFO] Usuário '%s' desconectado.\n", nome_removido_out);
+    }
 }
 
 void broadcast_lista_usuarios() {
-    char buffer_lista[TAM_MENSAGEM * 10]; // Buffer grande para a lista
+    char buffer_lista[TAM_MENSAGEM * 10];
     char buffer_usuario[100];
+    int sockets_para_enviar[MAX_CLIENTS];
+    int num_clientes = 0;
 
     pthread_mutex_lock(&mutex_lista);
 
-    // 1. Monta a string da lista
     memset(buffer_lista, 0, sizeof(buffer_lista));
-    strcpy(buffer_lista, "L"); // Inicia com o tipo da mensagem
-
+    strcpy(buffer_lista, "L");
     Usuario *atual = lista_usuarios;
-    if (atual == NULL) { // Se a lista está vazia, envia "L|"
+    if (atual == NULL) {
         strcat(buffer_lista, "|");
     } else {
         while (atual != NULL) {
-            // Formato: Nome:IP:Porta|
             snprintf(buffer_usuario, 100, "%s:%s:%d|", atual->nome, atual->ip, atual->porta_p2p);
             strcat(buffer_lista, buffer_usuario);
             atual = atual->prox;
         }
     }
-
-    // 2. Envia a lista para todos os usuários conectados
-    printf("[BROADCAST] Enviando lista: %s\n", buffer_lista);
+    
     atual = lista_usuarios;
-    while (atual != NULL) {
-        if (send(atual->socket_fd, buffer_lista, strlen(buffer_lista), 0) < 0) {
-            // Poderia tratar erro de envio aqui, mas a desconexão será pega pelo recv da thread
-        }
+    while (atual != NULL && num_clientes < MAX_CLIENTS) {
+        sockets_para_enviar[num_clientes++] = atual->socket_fd;
         atual = atual->prox;
     }
 
     pthread_mutex_unlock(&mutex_lista);
+
+    printf("[BROADCAST] Enviando lista para %d cliente(s): %s\n", num_clientes, buffer_lista);
+    for (int i = 0; i < num_clientes; i++) {
+        if (send(sockets_para_enviar[i], buffer_lista, strlen(buffer_lista), 0) < 0) {
+        }
+    }
 }
 
 // --- LÓGICA DE PROCESSAMENTO DE MENSAGENS E THREAD ---
 
 void processar_registro(char *msg, int sock, const char* ip_cliente) {
-    // Formato esperado: R<IP_IGNORADO>|<PORTA_P2P>|<NOME>|
-    char *payload = msg + 1; // Pula o 'R'
-    strtok(payload, "|"); // Ignora o IP enviado pelo cliente
+    char copia[TAM_MENSAGEM];
+    strcpy(copia, msg);
+
+    char *payload = copia + 1;
+    strtok(payload, "|");
     char *porta_str = strtok(NULL, "|");
     char *nome = strtok(NULL, "|");
 
@@ -130,12 +129,11 @@ void processar_registro(char *msg, int sock, const char* ip_cliente) {
     }
 }
 
-// Thread que gerencia a conexão de um único cliente
 void *handle_client(void *arg) {
     int socket_cliente = ((struct Usuario*)arg)->socket_fd;
     char ip_cliente[16];
     strcpy(ip_cliente, ((struct Usuario*)arg)->ip);
-    free(arg); // Libera a memória do argumento
+    free(arg);
 
     char buffer[TAM_MENSAGEM];
     int bytes_recebidos;
@@ -148,22 +146,26 @@ void *handle_client(void *arg) {
         if (!registrado && tipo == 'R') {
             processar_registro(buffer, socket_cliente, ip_cliente);
             registrado = 1;
+            broadcast_lista_usuarios();
         } else if (registrado && tipo == 'D') {
-            // A mensagem 'D' sinaliza uma desconexão limpa
-            break; // Sai do loop, o que levará à remoção e fechamento
+            break;
         } else {
-            // Outros tipos de mensagem do cliente para o servidor podem ser tratados aqui
             printf("[AVISO] Mensagem inesperada do socket %d: %s\n", socket_cliente, buffer);
         }
     }
     
-    // Se o loop terminar (recv retornou 0, -1 ou recebeu 'D'), o cliente desconectou
-    remover_usuario(socket_cliente);
+    char nome_removido[50] = "desconhecido";
+    remover_usuario(socket_cliente, nome_removido);
+    if (strcmp(nome_removido, "desconhecido") != 0) {
+        broadcast_lista_usuarios();
+    }
+    
     close(socket_cliente);
     pthread_exit(NULL);
 }
 
-// --- FUNÇÃO MAIN ---
+
+// --- MAIN ---
 int main() {
     #ifdef WIN
         WSADATA wsaData;

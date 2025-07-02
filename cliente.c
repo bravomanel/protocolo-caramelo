@@ -17,11 +17,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TAM_MENSAGEM 256
+#define TAM_MENSAGEM 1024
 #define PORTA_SERVIDOR_TCP 9999
 #define DEFAULT_P2P_PORT 5000
+#define MAX_CLIENTS 100
 
-// --- ESTRUTURA PARA ARMAZENAR USUÁRIOS LOCALMENTE ---
 typedef struct Usuario {
     char nome[50];
     char ip[16];
@@ -29,17 +29,74 @@ typedef struct Usuario {
     struct Usuario *prox;
 } Usuario;
 
-// --- VARIÁVEIS GLOBAIS ---
 int sock_servidor;
 char meu_nome[50];
-char meu_ip[16]; // IP que será informado ao servidor
+char meu_ip[16];
 int minha_porta_p2p;
-int cliente_rodando = 1; // Flag para controlar a execução das threads
+int cliente_rodando = 1;
 
-Usuario *lista_usuarios = NULL; // Ponteiro para a lista local de usuários
-pthread_mutex_t mutex_lista = PTHREAD_MUTEX_INITIALIZER; // Mutex para proteger a lista 
+Usuario *lista_usuarios = NULL;
+pthread_mutex_t mutex_lista = PTHREAD_MUTEX_INITIALIZER;
 
-// --- FUNÇÕES DE GERENCIAMENTO DA LISTA LOCAL ---
+void destruir_lista_local() {
+    pthread_mutex_lock(&mutex_lista);
+    Usuario *atual = lista_usuarios;
+    while (atual != NULL) {
+        Usuario *temp = atual;
+        atual = atual->prox;
+        free(temp);
+    }
+    lista_usuarios = NULL;
+    pthread_mutex_unlock(&mutex_lista);
+}
+
+void processar_e_atualizar_lista(char *lista_str) {
+    destruir_lista_local();
+
+    char* copia_lista = strdup(lista_str);
+    if (copia_lista == NULL) return;
+
+    char *payload = copia_lista + 1;
+    char *token_usuario = strtok(payload, "|");
+
+    while (token_usuario != NULL) {
+        Usuario *novo = (Usuario*)malloc(sizeof(Usuario));
+        if (novo) {
+            int itens_lidos = sscanf(token_usuario, "%49[^:]:%15[^:]:%d", novo->nome, novo->ip, &novo->porta);
+
+            if (itens_lidos == 3) { // Verifica se os 3 campos foram lidos com sucesso
+                novo->prox = NULL;
+                pthread_mutex_lock(&mutex_lista);
+                novo->prox = lista_usuarios;
+                lista_usuarios = novo;
+                pthread_mutex_unlock(&mutex_lista);
+            } else {
+                free(novo); // Libera memória se o parsing falhar
+            }
+        }
+        token_usuario = strtok(NULL, "|");
+    }
+    
+    free(copia_lista);
+    
+    printf("\n[INFO] Lista de usuários atualizada.\n");
+    printf("Escolha uma opção: ");
+    fflush(stdout);
+}
+
+
+void imprimir_lista_local() {
+    pthread_mutex_lock(&mutex_lista);
+    Usuario *atual = lista_usuarios;
+    if (atual == NULL) {
+        printf("Nenhum outro usuário online.\n");
+    }
+    while (atual != NULL) {
+        printf("- %s (%s:%d)\n", atual->nome, atual->ip, atual->porta);
+        atual = atual->prox;
+    }
+    pthread_mutex_unlock(&mutex_lista);
+}
 
 Usuario* encontrar_usuario(const char* nome) {
     pthread_mutex_lock(&mutex_lista);
@@ -55,80 +112,13 @@ Usuario* encontrar_usuario(const char* nome) {
     return NULL;
 }
 
-void destruir_lista_local() {
-    pthread_mutex_lock(&mutex_lista);
-    Usuario *atual = lista_usuarios;
-    while (atual != NULL) {
-        Usuario *temp = atual;
-        atual = atual->prox;
-        free(temp);
-    }
-    lista_usuarios = NULL;
-    pthread_mutex_unlock(&mutex_lista);
-}
-
-void processar_e_atualizar_lista(char *lista_str) {
-    // Formato esperado: LNome1:IP1:Porta1|Nome2:IP2:Porta2|...
-    destruir_lista_local(); // Limpa a lista antiga antes de popular com a nova
-
-    char *payload = strdup(lista_str) + 1; // Pula o caractere 'L'
-    char *token_usuario = strtok(payload, "|");
-    int tam_str;
-
-    while (token_usuario != NULL) {
-        tam_str = strlen(token_usuario) + 2;
-        Usuario *novo = (Usuario*)malloc(sizeof(Usuario));
-        if (novo) {
-            char *nome = strtok(token_usuario, ":");
-            char *ip = strtok(NULL, ":");
-            char *porta_str = strtok(NULL, ":|");
-
-            if (nome && ip && porta_str) {
-                strcpy(novo->nome, nome);
-                strcpy(novo->ip, ip);
-                novo->porta = atoi(porta_str);
-                novo->prox = NULL;
-
-                // Adiciona na lista
-                pthread_mutex_lock(&mutex_lista);
-                novo->prox = lista_usuarios;
-                lista_usuarios = novo;
-                pthread_mutex_unlock(&mutex_lista);
-            } else {
-                free(novo);
-            }
-        }
-        
-        token_usuario = strtok(NULL, "|");
-        
-        if(tam_str < strlen(lista_str)){
-          token_usuario = lista_str + tam_str;
-        }
-    }
-    printf("\n[INFO] Lista de usuários atualizada.\n");
-}
-
-void imprimir_lista_local() {
-    pthread_mutex_lock(&mutex_lista);
-    Usuario *atual = lista_usuarios;
-    if (atual == NULL) {
-        printf("Nenhum outro usuário online.\n");
-    }
-    while (atual != NULL) {
-        printf("- %s (%s:%d)\n", atual->nome, atual->ip, atual->porta);
-        atual = atual->prox;
-    }
-    pthread_mutex_unlock(&mutex_lista);
-}
-
-// --- FUNÇÕES DE AÇÕES DO MENU ---
 
 void tratar_envio_direto() {
     char nome_destino[50];
     char mensagem[TAM_MENSAGEM];
 
     printf("\nDigite o nome do destinatário: ");
-    scanf("%s", nome_destino);
+    scanf("%49s", nome_destino);
 
     Usuario* alvo = encontrar_usuario(nome_destino);
     if (alvo == NULL) {
@@ -140,16 +130,14 @@ void tratar_envio_direto() {
         return;
     }
 
-
     printf("Digite a sua mensagem: ");
-    while (getchar() != '\n'); // Limpa buffer
+    while (getchar() != '\n');
     fgets(mensagem, TAM_MENSAGEM, stdin);
     mensagem[strcspn(mensagem, "\n")] = 0;
 
     int sock_p2p = socket(PF_INET, SOCK_STREAM, 0);
     if (sock_p2p < 0) {
-        printf("[ERRO] Falha ao criar socket P2P.\n");
-        return;
+        printf("[ERRO] Falha ao criar socket P2P.\n"); return;
     }
 
     struct sockaddr_in endereco_alvo;
@@ -165,7 +153,6 @@ void tratar_envio_direto() {
     }
     
     char buffer_final[TAM_MENSAGEM];
-    // Formato: M<REMETENTE>|<MENSAGEM>|
     snprintf(buffer_final, TAM_MENSAGEM, "M%s|%s|", meu_nome, mensagem);
 
     send(sock_p2p, buffer_final, strlen(buffer_final), 0);
@@ -175,6 +162,9 @@ void tratar_envio_direto() {
 
 void tratar_envio_broadcast() {
     char mensagem[TAM_MENSAGEM];
+    Usuario alvos[MAX_CLIENTS];
+    int num_alvos = 0;
+
     printf("\nDigite a sua mensagem para todos: ");
     while (getchar() != '\n');
     fgets(mensagem, TAM_MENSAGEM, stdin);
@@ -182,44 +172,48 @@ void tratar_envio_broadcast() {
 
     pthread_mutex_lock(&mutex_lista);
     Usuario *atual = lista_usuarios;
-    while(atual != NULL) {
-        // Não envia para si mesmo
+    while(atual != NULL && num_alvos < MAX_CLIENTS) {
         if (strcmp(atual->nome, meu_nome) != 0) {
-            // Reutiliza a lógica de envio direto
-            int sock_p2p = socket(PF_INET, SOCK_STREAM, 0);
-            if (sock_p2p >= 0) {
-                struct sockaddr_in endereco_alvo;
-                memset(&endereco_alvo, 0, sizeof(endereco_alvo));
-                endereco_alvo.sin_family = AF_INET;
-                endereco_alvo.sin_addr.s_addr = inet_addr(atual->ip);
-                endereco_alvo.sin_port = htons(atual->porta);
-
-                if (connect(sock_p2p, (struct sockaddr *)&endereco_alvo, sizeof(endereco_alvo)) >= 0) {
-                    char buffer_final[TAM_MENSAGEM];
-                    // Formato: B<REMETENTE>|<MENSAGEM>|
-                    snprintf(buffer_final, TAM_MENSAGEM, "B%s|%s|", meu_nome, mensagem);
-                    send(sock_p2p, buffer_final, strlen(buffer_final), 0);
-                }
-                close(sock_p2p);
-            }
+            strcpy(alvos[num_alvos].nome, atual->nome);
+            strcpy(alvos[num_alvos].ip, atual->ip);
+            alvos[num_alvos].porta = atual->porta;
+            num_alvos++;
         }
         atual = atual->prox;
     }
+    
     pthread_mutex_unlock(&mutex_lista);
+
+    for(int i = 0; i < num_alvos; i++) {
+        int sock_p2p = socket(PF_INET, SOCK_STREAM, 0);
+        if (sock_p2p >= 0) {
+            struct sockaddr_in endereco_alvo;
+            memset(&endereco_alvo, 0, sizeof(endereco_alvo));
+            endereco_alvo.sin_family = AF_INET;
+            endereco_alvo.sin_addr.s_addr = inet_addr(alvos[i].ip);
+            endereco_alvo.sin_port = htons(alvos[i].porta);
+
+            if (connect(sock_p2p, (struct sockaddr *)&endereco_alvo, sizeof(endereco_alvo)) >= 0) {
+                char buffer_final[TAM_MENSAGEM];
+                snprintf(buffer_final, TAM_MENSAGEM, "B%s|%s|", meu_nome, mensagem);
+                send(sock_p2p, buffer_final, strlen(buffer_final), 0);
+            }
+            close(sock_p2p);
+        }
+    }
     printf("\n[INFO] Mensagem de broadcast enviada.\n");
 }
+
 
 void tratar_desconexao() {
     char buffer_final[TAM_MENSAGEM];
     printf("\nDesconectando do servidor...\n");
 
-    // Formato: D<NOME>|
     snprintf(buffer_final, TAM_MENSAGEM, "D%s|", meu_nome);
     send(sock_servidor, buffer_final, strlen(buffer_final), 0);
     
-    cliente_rodando = 0; // Sinaliza para as threads terminarem
+    cliente_rodando = 0;
     close(sock_servidor);
-    destruir_lista_local();
 }
 
 void exibir_menu() {
@@ -233,7 +227,6 @@ void exibir_menu() {
     printf("Escolha uma opção: ");
 }
 
-// --- THREAD DE RECEBIMENTO P2P ---
 void *thread_recebimento(void *arg) {
     int sock_listen_p2p;
     struct sockaddr_in endereco_local_p2p;
@@ -252,12 +245,11 @@ void *thread_recebimento(void *arg) {
     }
 
     listen(sock_listen_p2p, 5);
-    printf("[INFO] Thread de recebimento iniciada. Ouvindo na porta %d\n", minha_porta_p2p);
 
     while (cliente_rodando) {
         int sock_peer = accept(sock_listen_p2p, NULL, NULL);
         if (sock_peer < 0) {
-            if (cliente_rodando) printf("[ERRO] accept() na thread P2P falhou.\n");
+            if (cliente_rodando) { }
             continue;
         }
 
@@ -266,8 +258,11 @@ void *thread_recebimento(void *arg) {
         recv(sock_peer, buffer, TAM_MENSAGEM, 0);
 
         if (strlen(buffer) > 0) {
-            char tipo = buffer[0];
-            char *payload = buffer + 1;
+            char copia_buffer[TAM_MENSAGEM];
+            strcpy(copia_buffer, buffer);
+
+            char tipo = copia_buffer[0];
+            char *payload = copia_buffer + 1;
             char *remetente = strtok(payload, "|");
             char *mensagem = strtok(NULL, "|");
 
@@ -280,17 +275,14 @@ void *thread_recebimento(void *arg) {
             }
         }
         close(sock_peer);
-        // Exibe o menu novamente para o usuário não perder o prompt
         printf("Escolha uma opção: ");
         fflush(stdout);
     }
     
     close(sock_listen_p2p);
-    printf("[INFO] Thread de recebimento encerrada.\n");
     return NULL;
 }
 
-// --- THREAD DE RECEBIMENTO SERVER ---
 void *thread_servidor(void *arg) {
     char buffer[TAM_MENSAGEM];
     
@@ -300,24 +292,25 @@ void *thread_servidor(void *arg) {
 
         if (bytes_recebidos <= 0) {
             if (cliente_rodando) {
-                printf("\n[ERRO] Conexão com o servidor perdida.\n");
-                cliente_rodando = 0;  // Encerra o cliente
+                printf("\n[ERRO] Conexão com o servidor perdida. Encerrando...\n");
+                cliente_rodando = 0;
+                #ifdef WIN
+                    shutdown(sock_servidor, SD_BOTH);
+                #else
+                    close(sock_servidor);
+                #endif
             }
             break;
         }
 
-        // Processa a mensagem recebida do servidor
-        if (buffer[0] == 'L') {  // Se for uma lista de usuários
+        if (buffer[0] == 'L') {
             processar_e_atualizar_lista(buffer);
         }
     }
     
-    printf("[INFO] Thread do servidor encerrada.\n");
     return NULL;
 }
 
-
-// --- FUNÇÃO MAIN ---
 int main(int argc, char *argv[]) {
     #ifdef WIN
         WSADATA wsaData;
@@ -334,7 +327,7 @@ int main(int argc, char *argv[]) {
     
     char *ip_servidor = argv[1];
     strcpy(meu_nome, argv[2]);
-    strcpy(meu_ip, "127.0.0.1"); // Simplificação. Para redes reais, seria necessário um método mais robusto.
+    strcpy(meu_ip, "127.0.0.1");
 
     if (argc == 4) minha_porta_p2p = atoi(argv[3]);
     else minha_porta_p2p = DEFAULT_P2P_PORT;
@@ -355,60 +348,49 @@ int main(int argc, char *argv[]) {
 
     printf("Conectado ao servidor! Registrando...\n");
 
-    // 1. Enviar mensagem de REGISTRO ('R') para o servidor
     char msg_registro[TAM_MENSAGEM];
     snprintf(msg_registro, TAM_MENSAGEM, "R%s|%d|%s|", meu_ip, minha_porta_p2p, meu_nome);
     send(sock_servidor, msg_registro, strlen(msg_registro), 0);
-
-    // 2. Receber a lista inicial de usuários ('L') do servidor (ou uma confirmação 'A')
-    char buffer_resposta[TAM_MENSAGEM];
-    memset(buffer_resposta, 0, TAM_MENSAGEM);
-     
-    recv(sock_servidor, buffer_resposta, TAM_MENSAGEM, 0); // Descomente se o servidor enviar a lista
-     
-    if(buffer_resposta[0] == 'L') {
-        processar_e_atualizar_lista(buffer_resposta);
-    }
     
-    // 3. Criar a thread para recebimento P2P
-    pthread_t receiver_thread_id;
-    if (pthread_create(&receiver_thread_id, NULL, thread_recebimento, NULL) != 0) {
-        printf("[ERRO] Falha ao criar a thread de recebimento P2P.\n");
-        return 1;
+    pthread_t p2p_thread_id;
+    if (pthread_create(&p2p_thread_id, NULL, thread_recebimento, NULL) != 0) {
+        printf("[ERRO] Falha ao criar a thread P2P.\n"); return 1;
     }
 
-    // 4. Criar a thread para receber mensagens do servidor
     pthread_t server_thread_id;
     if (pthread_create(&server_thread_id, NULL, thread_servidor, NULL) != 0) {
-        printf("[ERRO] Falha ao criar a thread do servidor.\n");
-        cliente_rodando = 0;
-        return 1;
+        printf("[ERRO] Falha ao criar a thread do servidor.\n"); return 1;
     }
 
-    // 5. Loop do menu principal
     int escolha = 0;
-    while (cliente_rodando && escolha != 4) {
+    while (cliente_rodando) {
         exibir_menu();
         if (scanf("%d", &escolha) != 1) {
-            while(getchar() != '\n');  // Limpa buffer se não for número
+            if (!cliente_rodando) break;
+            while(getchar() != '\n');
+            escolha = 0;
             continue;
+        }
+
+        if (!cliente_rodando) break;
+        if (escolha == 4) {
+            tratar_desconexao();
+            break;
         }
 
         switch (escolha) {
             case 1: tratar_envio_direto(); break;
             case 2: tratar_envio_broadcast(); break;
-            case 3:  // Agora apenas imprime a lista já atualizada
+            case 3:
                 printf("\n--- USUARIOS ONLINE ---\n");
                 imprimir_lista_local();
                 printf("-----------------------\n");
                 break;
-            case 4: tratar_desconexao(); break;
             default: printf("\nOpção inválida!\n"); break;
         }
     }
 
-    // 6. Esperar as threads terminarem
-    pthread_join(receiver_thread_id, NULL);
+    pthread_join(p2p_thread_id, NULL);
     pthread_join(server_thread_id, NULL);
     
     printf("Programa encerrado.\n");
